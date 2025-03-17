@@ -97,7 +97,7 @@ jobs:
         overwrite: true
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Create directory
-      uses: ysurac/ssh-action@master
+      uses: dmkuzmin/ssh-action@master
       env:
           SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
           SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
@@ -112,7 +112,7 @@ jobs:
         args: -tt
     - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
       name: Deploy - Create directory
-      uses: ysurac/ssh-action@master
+      uses: dmkuzmin/ssh-action@master
       env:
           SOURCE_NAME: ${{ steps.branch_name.outputs.SOURCE_NAME }}
           SOURCE_BRANCH: ${{ steps.branch_name.outputs.SOURCE_BRANCH }}
@@ -135,7 +135,7 @@ jobs:
         mv ${OMR_TARGET}/${OMR_KERNEL}/source/bin ${GITHUB_WORKSPACE}/
     - if: steps.branch_name.outputs.SOURCE_BRANCH == ''
       name: Deploy - Upload via rsync
-      uses: ysurac/action-rsync@master
+      uses: dmkuzmin/action-rsync@master
       env:
         ARGS: -av --delete-after
         TARGET: deploy/release/${{steps.branch_name.outputs.SOURCE_TAG}}/${{matrix.OMR_TARGET}}
@@ -150,7 +150,7 @@ jobs:
         GITHUB_WORKSPACE: ${{ steps.branch_name.outputs.WORKSPACE }}
     - if: steps.branch_name.outputs.SOURCE_BRANCH != ''
       name: Deploy - Upload via rsync
-      uses: ysurac/action-rsync@master
+      uses: dmkuzmin/action-rsync@master
       env:
         ARGS: -av --delete-after
         TARGET: deploy/${{ steps.branch_name.outputs.SOURCE_BRANCH }}/${{matrix.OMR_KERNEL}}/${{matrix.OMR_TARGET}}
