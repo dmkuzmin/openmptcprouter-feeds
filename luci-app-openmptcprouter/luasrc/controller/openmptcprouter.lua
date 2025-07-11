@@ -665,6 +665,9 @@ function wizard_add()
 	local country = luci.http.formvalue("country") or "world"
 	ucic:set("openmptcprouter","settings","country",country)
 	ucic:save("openmptcprouter")
+	ucic:set("omr-tracker","defaults","country",country)
+	ucic:save("omr-tracker")
+	ucic:commit("omr-tracker")
 
 	-- Get DNS64
 	local dns64 = luci.http.formvalue("dns64") or "0"
@@ -1032,7 +1035,7 @@ function wizard_add()
 		ucic:foreach("openvpn","openvpn", function(s)
 			local sectionname = s[".name"]
 			if sectionname:match("^omr.*") then
-				ucic:set("openvpn",sectionname,"cipher","chacha20-poly1305")
+				ucic:set("openvpn",sectionname,"cipher","CHACHA20-POLY1305")
 			end
 		end)
 		--ucic:set("openvpn","omr","cipher","chacha20-poly1305")
@@ -1420,6 +1423,13 @@ function settings_add()
 		luci.sys.exec("/etc/init.d/modemmanager stop")
 	end
 
+	-- Ban UDP IPs
+	local banudpip = luci.http.formvalue("banudpip") or "0"
+	ucic:set("firewall","omr_dst_udp_banip_rule_v4","enabled",banudpip)
+	ucic:set("firewall","omr_dst_udp_banip_rule_v6","enabled",banudpip)
+	ucic:save("firewall")
+	ucic:commit("firewall")
+
 	-- Enable/disable external check
 	local externalcheck = luci.http.formvalue("externalcheck") or "1"
 	ucic:set("openmptcprouter","settings","external_check",externalcheck)
@@ -1552,8 +1562,8 @@ function settings_add()
 	ucic:commit("shadowsocks-libev")
 
 	-- Set master to dynamic or static
-	local master_type = luci.http.formvalue("master_type") or "static"
-	ucic:set("openmptcprouter","settings","master",master_type)
+	--local master_type = luci.http.formvalue("master_type") or "static"
+	--ucic:set("openmptcprouter","settings","master",master_type)
 
 	-- Set CPU scaling minimum frequency
 	local scaling_min_freq = luci.http.formvalue("scaling_min_freq") or ""
@@ -1590,6 +1600,7 @@ function settings_add()
 	luci.sys.call("/etc/init.d/openmptcprouter restart >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/openmptcprouter-vps set_vps_firewall >/dev/null 2>/dev/null")
 	luci.sys.call("/etc/init.d/omr-6in4 restart >/dev/null 2>/dev/null")
+	luci.sys.call("/etc/init.d/firewall reload >/dev/null 2>/dev/null")
 
 	-- Done, redirect
 	menuentry = ucic:get("openmptcprouter","settings","menu") or "openmptcprouter"

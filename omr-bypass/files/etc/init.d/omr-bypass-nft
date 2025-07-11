@@ -433,6 +433,7 @@ _bypass_proto_without_ndpi() {
 		ALLIPS=$(sqlite3 /usr/share/omr-bypass/omr-bypass.db "select ip from ipproto where proto=\"$proto\";" ".exit")
 		if [ -n "$ALLIPS" ]; then
 			if [ "$vpn" != "1" ]; then
+				zone="*"
 				uci -q batch <<-EOF >/dev/null
 					set firewall.bypass_${proto}=ipset
 					set firewall.bypass_${proto}.name="bypass_${proto}"
@@ -441,7 +442,7 @@ _bypass_proto_without_ndpi() {
 					set firewall.bypass_${proto}.enabled='1'
 					set firewall.bypass_${proto}_rule=rule
 					set firewall.bypass_${proto}_rule.name="bypass_${proto}_rule"
-					set firewall.bypass_${proto}_rule.src='lan'
+					set firewall.bypass_${proto}_rule.src="${zone}"
 					set firewall.bypass_${proto}_rule.proto='all'
 					set firewall.bypass_${proto}_rule.dest='*'
 					set firewall.bypass_${proto}_rule.family='ipv4'
@@ -459,7 +460,7 @@ _bypass_proto_without_ndpi() {
 					set firewall.bypass6_${proto}.enabled='1'
 					set firewall.bypass6_${proto}_rule=rule
 					set firewall.bypass6_${proto}_rule.name="bypass6_${proto}_rule"
-					set firewall.bypass6_${proto}_rule.src='lan'
+					set firewall.bypass6_${proto}_rule.src="${zone}"
 					set firewall.bypass6_${proto}_rule.family='ipv6'
 					set firewall.bypass6_${proto}_rule.dest='*'
 					set firewall.bypass6_${proto}_rule.proto='all'
@@ -484,7 +485,7 @@ _bypass_proto_without_ndpi() {
 				#		commit network
 				#	EOF
 				#fi
-
+				_intf_rules_all_rules ${proto} ${intfid}
 				#ipset -q flush bypass_$proto > /dev/null 2>&1
 				#ipset -q flush bypass6_$proto > /dev/null 2>&1
 				#ipset -q --exist restore <<-EOF
@@ -493,12 +494,12 @@ _bypass_proto_without_ndpi() {
 				#EOF
 			fi
 			for ip in $ALLIPS; do
-				valid_ip4=$( valid_subnet4 $ip)
-				valid_ip6=$( valid_subnet6 $ip)
+				valid_ip4=$( valid_subnet4 $ip )
+				valid_ip6=$( valid_subnet6 $ip )
 				if [ "$valid_ip4" = "ok" ]; then
 					if [ "$vpn" != "1" ]; then
 						#ipset -q add bypass_$proto $ip
-						uci -q add_list firewall.bypass_${proto}.entry="$ip"
+						uci add_list firewall.bypass_${proto}.entry="$ip"
 					else
 						#ipset -q add omr_dst_bypass_$intf $ip
 						uci -q add_list firewall.omr_dst_bypass_${intf}_4.entry="$ip"
@@ -513,6 +514,7 @@ _bypass_proto_without_ndpi() {
 					fi
 				fi
 			done
+			uci -q commit firewall
 		fi
 	fi
 	# Use dnsmasq ipset to bypass domains of the proto
@@ -553,6 +555,29 @@ _bypass_proto_without_ndpi() {
 				fi
 			fi
 		done
+	fi
+}
+
+_intf_rules_all_rules() {
+	service=$1
+	count=$2
+	proxyproto=""
+	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && proxyproto="ss_rules"
+	[ "$(uci -q get v2ray.main.enabled)" = "1" ] && proxyproto="v2r_rules"
+	[ "$(uci -q get xray.main.enabled)" = "1" ] && proxyproto="xr_rules"
+	cat >> /etc/firewall.omr-bypass <<-EOF
+		nft insert rule inet fw4 ${proxyproto}_pre_tcp ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x4539${count} accept
+		nft insert rule inet fw4 ${proxyproto}_local_out ip daddr @bypass_${service} accept
+		nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x4539${count} accept
+	EOF
+	if [ "$disableipv6" = "0" ]; then
+		cat >> /etc/firewall.omr-bypass <<-EOF
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proxyproto}_pre_tcp meta mark 0x6539${count} accept
+			nft insert rule inet fw4 ${proxyproto}_local_out ip6 daddr @bypass6_${service} accept
+			nft insert rule inet fw4 ${proxyproto}_local_out meta mark 0x6539${count} accept
+		EOF
 	fi
 }
 
@@ -649,14 +674,14 @@ _intf_rule() {
 		else
 			protocol="4"
 		fi
+		zone="*"
 		for ipv46 in $protocol; do
-			#echo "ipv46: $ipv46 for $intf"
 			uci -q batch <<-EOF
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.name="omr_dst_bypass_${intf}_rule"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.ipset="omr_dst_bypass_${intf}_${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.target='MARK'
-				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.family="ipv${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}.enabled='0'
@@ -672,7 +697,7 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_dstip_${ipv46}_accept.mark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.name="omr_dst_bypass_${intf}_srcip"
-				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.family="ipv${ipv46}"
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.target='MARK'
@@ -681,7 +706,7 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_srcip_${ipv46}.set_xmark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.name='omr_dst_bypass_${intf}_mac'
-				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_mac_${ipv46}.enabled='0'
@@ -690,7 +715,7 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.name="omr_dst_bypass_${intf}_srcport_tcp"
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.proto='tcp'
-				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_srcport_tcp_${ipv46}.enabled='0'
@@ -698,14 +723,14 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.name="omr_dst_bypass_${intf}_srcport_udp"
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.proto='udp'
-				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.enabled='0'
 				set firewall.omr_dst_bypass_${intf}_srcport_udp_${ipv46}.set_xmark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.name="omr_dst_bypass_${intf}_dstport_tcp"
-				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.target='MARK'
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.proto='tcp'
@@ -713,7 +738,7 @@ _intf_rule() {
 				set firewall.omr_dst_bypass_${intf}_dstport_tcp_${ipv46}.set_xmark="0x${ipv46}539${count}"
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}=rule
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.name="omr_dst_bypass_${intf}_dstport_udp"
-				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.src='lan'
+				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.src="${zone}"
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.dest='*'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.proto='udp'
 				set firewall.omr_dst_bypass_${intf}_dstport_udp_${ipv46}.target='MARK'
@@ -903,12 +928,14 @@ start_service() {
 	}
 	disableipv6="$(uci -q get openmptcprouter.settings.disable_ipv6)"
 	#noipv6="$(uci -q get omr-bypass.global.noipv6)"
+	fwfilechangemd5=""
+	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5="$(md5sum /etc/firewall.omr-bypass)"
 	rm -f /etc/firewall.omr-bypass
-	cat > /etc/firewall.omr-bypass <<-EOF
-	#!/bin/sh
-	#nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
-	#nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all accept
-	EOF
+	#cat > /etc/firewall.omr-bypass <<-EOF
+	##!/bin/sh
+	##nft insert rule inet fw4 ss_rules_dst_tcp ip daddr @omr_dst_bypass_all accept
+	##nft insert rule inet fw4 ss_rules_local_out ip daddr @omr_dst_bypass_all accept
+	#EOF
 	#config_load shadowsocks-libev
 	#config_foreach _ss_rules_config ss_rules
 	([ "$(uci -q get shadowsocks-libev.sss0.disabled)" != "1" ] || [ "$(uci -q get shadowsocks-rust.sss0.disabled)" != "1" ]) && _ss_rules_config
@@ -956,36 +983,44 @@ start_service() {
 #	ip -6 rule add prio 1 fwmark 0x6539 lookup 6991337 > /dev/null 2>&1
 
 	# NDPI Netfilter is not available for nftables
-	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass-dpi | $IPTABLESRESTORE -w --counters 2>/dev/null
-	$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
-	*mangle
-	:omr-bypass-dpi -
-	-A INPUT -j omr-bypass-dpi
-	-A FORWARD -j omr-bypass-dpi
-	COMMIT
-	EOF
-	if [ "$disableipv6" = "0" ]; then
-		$IP6TABLESSAVE --counters | grep -v omr-bypass6-dpi | $IP6TABLESRESTORE -w --counters 2>/dev/null
-		$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
-		*mangle
-		:omr-bypass6-dpi -
-		-A INPUT -j omr-bypass6-dpi
-		-A FORWARD -j omr-bypass6-dpi
-		COMMIT
-		EOF
-	fi
+#	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass-dpi | $IPTABLESRESTORE -w --counters 2>/dev/null
+#	$IPTABLESRESTORE -w --wait=60  --noflush <<-EOF
+#	*mangle
+#	:omr-bypass-dpi -
+#	-A INPUT -j omr-bypass-dpi
+#	-A FORWARD -j omr-bypass-dpi
+#	COMMIT
+#	EOF
+#	if [ "$disableipv6" = "0" ]; then
+#		$IP6TABLESSAVE --counters | grep -v omr-bypass6-dpi | $IP6TABLESRESTORE -w --counters 2>/dev/null
+#		$IP6TABLESRESTORE -w --wait=60  --noflush <<-EOF
+#		*mangle
+#		:omr-bypass6-dpi -
+#		-A INPUT -j omr-bypass6-dpi
+#		-A FORWARD -j omr-bypass6-dpi
+#		COMMIT
+#		EOF
+#	fi
 	config_load omr-bypass
 	[ -d /proc/net/xt_ndpi/proto ] && config_foreach _bypass_proto dpis
 	config_foreach _bypass_proto_without_ndpi dpis
-	[ -n "$(uci changes network)" ] && {
+	[ -n "$(uci -q changes network)" ] && {
 		uci -q commit network
 		/etc/init.d/network reload
 	}
 	uci -q commit omr-bypass
 	uci -q commit dhcp
-	[ -n "$(uci changes firewall)" ] && {
+	fwfilechangemd5check=""
+	[ -f /etc/firewall.omr-bypass ] && fwfilechangemd5check="$(md5sum /etc/firewall.omr-bypass)"
+	if [ "$fwfilechangemd5check" = "$fwfilechangemd5" ]; then
+		RELOAD=""
+	fi
+
+
+	[ -n "$(uci -q changes firewall)" ] && {
 		uci -q commit firewall
-		fw4 -q restart
+		[ -z "$RELOAD" ] && fw4 -q restart
+		[ -n "$RELOAD" ] && fw4 -q reload
 	}
 
 	[ -z "$RELOAD" ] && [ "$add_domains" = "true" ] && {
@@ -1009,8 +1044,8 @@ start_service() {
 
 stop_service() {
 	# Rules for ndpi
-	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass | $IPTABLESRESTORE -w --counters 2>/dev/null
-	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
+#	$IPTABLESSAVE --counters 2>/dev/null | grep -v omr-bypass | $IPTABLESRESTORE -w --counters 2>/dev/null
+#	$IP6TABLESSAVE --counters 2>/dev/null | grep -v omr-bypass6 | $IP6TABLESRESTORE -w --counters 2>/dev/null
 	# disable all rules
 	uci -q set firewall.omr_bypass.enabled='0'
 	config_load dhcp
@@ -1020,7 +1055,7 @@ stop_service() {
 	config_foreach _delete_firewall_rules rule
 	config_foreach _delete_firewall_rules ipset
 	uci -q commit firewall
-	fw4 -q restart
+	[ -z "$RELOAD" ] && fw4 -q restart
 }
 
 service_triggers() {
@@ -1028,7 +1063,7 @@ service_triggers() {
 }
 
 reload_service() {
-	#RELOAD=1
+	RELOAD=1
 	stop
 	start
 }
